@@ -1,0 +1,13 @@
+[package]
+name = "pacmanstats"
+version = "0.1.0"
+edition = "2021"
+description = "TUI for browsing pacman history by day with per-day diff"
+license = "MIT"
+
+[dependencies]
+ratatui = "0.29"
+crossterm = "0.28"
+chrono = { version = "0.4", features = ["alloc"] }
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
