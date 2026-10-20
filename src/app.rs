@@ -3,7 +3,7 @@ use crate::model::{Day, DiffKind};
 use crossterm::event::{self, Event as CEvent, KeyCode, KeyModifiers};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Tabs},
     Frame,
@@ -11,6 +11,27 @@ use ratatui::{
 use std::io;
 use std::path::Path;
 use std::time::Duration;
+
+/// Muted pastel palette with a common cool/teal tint. All accent colors are
+/// normalized to roughly the same relative luminance (~0.42) so none of them
+/// looks noticeably brighter or darker than the others.
+mod theme {
+    use ratatui::style::Color;
+
+    pub const FG: Color = Color::Rgb(0xE1, 0xE5, 0xE8);
+    pub const DIM: Color = Color::Rgb(0x66, 0x8F, 0xA3);
+    pub const ACCENT: Color = Color::Rgb(0x9C, 0xC2, 0xCA);
+
+    pub const GREEN: Color = Color::Rgb(0x64, 0xBF, 0x82);
+    pub const YELLOW: Color = Color::Rgb(0xBC, 0xAE, 0x5A);
+    pub const RED: Color = Color::Rgb(0xD6, 0xA1, 0x9B);
+    pub const MAGENTA: Color = Color::Rgb(0xD6, 0x9B, 0xCA);
+    pub const CYAN: Color = Color::Rgb(0x73, 0xB8, 0xC6);
+
+    pub const SEL_BG: Color = Color::Rgb(0x2E, 0x4C, 0x5A);
+    pub const SEL_FG: Color = Color::Rgb(0xF0, 0xF2, 0xF2);
+    pub const TAB_FG: Color = Color::Rgb(0x28, 0x42, 0x4E);
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum View {
@@ -143,12 +164,35 @@ impl Ui {
 
 fn kind_style(kind: Kind) -> Style {
     match kind {
-        Kind::Installed => Style::default().fg(Color::Green),
-        Kind::Upgraded => Style::default().fg(Color::Yellow),
-        Kind::Downgraded => Style::default().fg(Color::Magenta),
-        Kind::Removed => Style::default().fg(Color::Red),
-        Kind::Reinstalled => Style::default().fg(Color::Cyan),
+        Kind::Installed => Style::default().fg(theme::GREEN),
+        Kind::Upgraded => Style::default().fg(theme::YELLOW),
+        Kind::Downgraded => Style::default().fg(theme::MAGENTA),
+        Kind::Removed => Style::default().fg(theme::RED),
+        Kind::Reinstalled => Style::default().fg(theme::CYAN),
     }
+}
+
+/// Border and title styling for the two main panes. The focused pane gets a
+/// bright accent border and title; the other pane is dimmed.
+fn pane_block(title: String, focused: bool) -> Block<'static> {
+    let accent = Style::default()
+        .fg(theme::ACCENT)
+        .add_modifier(Modifier::BOLD);
+    Block::default()
+        .borders(Borders::ALL)
+        .title(Line::styled(
+            title,
+            if focused {
+                accent
+            } else {
+                Style::default().fg(theme::DIM)
+            },
+        ))
+        .border_style(if focused {
+            accent
+        } else {
+            Style::default().fg(theme::DIM)
+        })
 }
 
 fn render(f: &mut Frame, ui: &mut Ui, log_path: &Path, area: Rect) {
@@ -168,7 +212,9 @@ fn render(f: &mut Frame, ui: &mut Ui, log_path: &Path, area: Rect) {
         Line::from(vec![
             Span::styled(
                 "pacmanstats ",
-                Style::default().add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme::ACCENT)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::raw(format!(
                 "— {}  •  {} days, {} events",
@@ -179,25 +225,31 @@ fn render(f: &mut Frame, ui: &mut Ui, log_path: &Path, area: Rect) {
         ]),
         Line::from(vec![Span::styled(
             match ui.focus {
-                Focus::Days => "focus: days  •  Tab switch pane",
-                Focus::Pkgs => "focus: packages  •  Tab switch pane",
+                Focus::Days => "focus: days  •  ←/→ switch pane  •  Tab switch view",
+                Focus::Pkgs => "focus: packages  •  ←/→ switch pane  •  Tab switch view",
             },
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme::DIM),
         )]),
-    ]);
+    ])
+    .style(Style::default().fg(theme::FG));
     f.render_widget(header, chunks[0]);
 
     // Tabs
     let titles: Vec<Line> = View::ALL.iter().map(|v| Line::from(v.title())).collect();
     let tab_idx = View::ALL.iter().position(|v| *v == ui.view).unwrap_or(0);
     let tabs = Tabs::new(titles)
-        .block(Block::default().borders(Borders::ALL).title(" view "))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(theme::DIM))
+                .title(Line::styled(" view ", Style::default().fg(theme::DIM))),
+        )
         .select(tab_idx)
-        .style(Style::default())
+        .style(Style::default().fg(theme::FG))
         .highlight_style(
             Style::default()
-                .fg(Color::Black)
-                .bg(Color::White)
+                .fg(theme::TAB_FG)
+                .bg(theme::ACCENT)
                 .add_modifier(Modifier::BOLD),
         );
     f.render_widget(tabs, chunks[1]);
@@ -221,27 +273,23 @@ fn render(f: &mut Frame, ui: &mut Ui, log_path: &Path, area: Rect) {
                 if d.n_reinstalled > 0 {
                     Span::styled(
                         format!(" ={}", d.n_reinstalled),
-                        Style::default().fg(Color::Cyan),
+                        Style::default().fg(theme::CYAN),
                     )
                 } else {
                     Span::raw("")
                 },
                 Span::styled(
                     format!("  Δ{}", d.diff.len()),
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(theme::DIM),
                 ),
             ]);
             ListItem::new(line)
         })
         .collect();
-    let days_block = Block::default()
-        .borders(Borders::ALL)
-        .title(format!(" days ({}) ", ui.days.len()))
-        .border_style(if ui.focus == Focus::Days {
-            Style::default().fg(Color::White)
-        } else {
-            Style::default()
-        });
+    let days_block = pane_block(
+        format!(" days ({}) ", ui.days.len()),
+        ui.focus == Focus::Days,
+    );
     let mut day_state = ListState::default();
     day_state.select(if ui.days.is_empty() {
         None
@@ -250,9 +298,11 @@ fn render(f: &mut Frame, ui: &mut Ui, log_path: &Path, area: Rect) {
     });
     let days_list = List::new(day_items)
         .block(days_block)
+        .style(Style::default().fg(theme::FG))
         .highlight_style(
             Style::default()
-                .bg(Color::DarkGray)
+                .fg(theme::SEL_FG)
+                .bg(theme::SEL_BG)
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol("▶ ");
@@ -273,17 +323,17 @@ fn render(f: &mut Frame, ui: &mut Ui, log_path: &Path, area: Rect) {
                 let (sym, style, detail) = match k {
                     DiffKind::Added => (
                         '+',
-                        Style::default().fg(Color::Green),
+                        Style::default().fg(theme::GREEN),
                         format!("{} {}", pkg, after.unwrap_or("?")),
                     ),
                     DiffKind::Removed => (
                         '-',
-                        Style::default().fg(Color::Red),
+                        Style::default().fg(theme::RED),
                         format!("{} {}", pkg, before.unwrap_or("?")),
                     ),
                     DiffKind::Changed => (
                         '~',
-                        Style::default().fg(Color::Yellow),
+                        Style::default().fg(theme::YELLOW),
                         format!(
                             "{} {} -> {}",
                             pkg,
@@ -315,7 +365,7 @@ fn render(f: &mut Frame, ui: &mut Ui, log_path: &Path, area: Rect) {
             .map(|e| {
                 let st = kind_style(e.kind);
                 let line = Line::from(vec![
-                    Span::styled(format!("{} ", e.time), Style::default().fg(Color::DarkGray)),
+                    Span::styled(format!("{} ", e.time), Style::default().fg(theme::DIM)),
                     Span::styled(format!("{} ", e.kind.short()), st),
                     Span::raw(e.pkg.clone()),
                     Span::raw(" "),
@@ -327,14 +377,7 @@ fn render(f: &mut Frame, ui: &mut Ui, log_path: &Path, area: Rect) {
         (title, items)
     };
 
-    let pkgs_block = Block::default()
-        .borders(Borders::ALL)
-        .title(title)
-        .border_style(if ui.focus == Focus::Pkgs {
-            Style::default().fg(Color::White)
-        } else {
-            Style::default()
-        });
+    let pkgs_block = pane_block(title, ui.focus == Focus::Pkgs);
     if items.is_empty() {
         let empty = Paragraph::new(if ui.days.is_empty() {
             "no ALPM events in log"
@@ -346,7 +389,7 @@ fn render(f: &mut Frame, ui: &mut Ui, log_path: &Path, area: Rect) {
             "no events in this view for the day"
         })
         .block(pkgs_block)
-        .style(Style::default().fg(Color::DarkGray));
+        .style(Style::default().fg(theme::DIM));
         f.render_widget(empty, main[1]);
     } else {
         // Plain viewport scroll: no per-row cursor, the list itself moves.
@@ -355,7 +398,9 @@ fn render(f: &mut Frame, ui: &mut Ui, log_path: &Path, area: Rect) {
         ui.pkg_h = height;
         let start = ui.pkg_scroll.min(items.len().saturating_sub(height));
         let visible: Vec<ListItem> = items.into_iter().skip(start).take(height).collect();
-        let list = List::new(visible).block(pkgs_block);
+        let list = List::new(visible)
+            .block(pkgs_block)
+            .style(Style::default().fg(theme::FG));
         f.render_widget(list, main[1]);
     }
 
@@ -363,28 +408,28 @@ fn render(f: &mut Frame, ui: &mut Ui, log_path: &Path, area: Rect) {
     // replaced by the search input.
     if ui.editing_filter {
         let footer = Paragraph::new(Line::from(vec![
-            Span::styled("filter: ", Style::default().fg(Color::Yellow)),
-            Span::raw(format!("{}▌", ui.query)),
+            Span::styled("filter: ", Style::default().fg(theme::ACCENT)),
+            Span::styled(format!("{}▌", ui.query), Style::default().fg(theme::FG)),
         ]))
         .alignment(Alignment::Center)
-        .style(Style::default().fg(Color::DarkGray));
+        .style(Style::default().fg(theme::DIM));
         f.render_widget(footer, chunks[3]);
     } else {
         let mut spans = vec![
-            Span::raw("q quit  •  Tab focus  •  ↑↓ move  •  1-6 view  •  "),
-            Span::styled("/ filter", Style::default().fg(Color::Yellow)),
+            Span::raw("q quit  •  Tab view  •  ←→ pane  •  ↑↓ move  •  1-6 view  •  "),
+            Span::styled("/ filter", Style::default().fg(theme::ACCENT)),
             Span::raw("  •  Esc clear"),
         ];
         if !ui.query.is_empty() {
             spans.push(Span::raw("  •  "));
             spans.push(Span::styled(
                 format!("filter: `{}`", ui.query),
-                Style::default().fg(Color::Yellow),
+                Style::default().fg(theme::ACCENT),
             ));
         }
         let footer = Paragraph::new(Line::from(spans))
             .alignment(Alignment::Center)
-            .style(Style::default().fg(Color::DarkGray));
+            .style(Style::default().fg(theme::DIM));
         f.render_widget(footer, chunks[3]);
     }
 }
@@ -451,10 +496,14 @@ pub fn run(days_asc: Vec<Day>, log_path: &Path) -> io::Result<()> {
                 ui.editing_filter = true;
             }
             KeyCode::Tab => {
-                ui.focus = match ui.focus {
-                    Focus::Days => Focus::Pkgs,
-                    Focus::Pkgs => Focus::Days,
-                };
+                let pos = View::ALL.iter().position(|v| *v == ui.view).unwrap_or(0);
+                ui.view = View::ALL[(pos + 1) % View::ALL.len()];
+                ui.pkg_scroll = 0;
+            }
+            KeyCode::BackTab => {
+                let pos = View::ALL.iter().position(|v| *v == ui.view).unwrap_or(0);
+                ui.view = View::ALL[(pos + View::ALL.len() - 1) % View::ALL.len()];
+                ui.pkg_scroll = 0;
             }
             KeyCode::Left | KeyCode::Char('h') => ui.focus = Focus::Days,
             KeyCode::Right | KeyCode::Char('l') => ui.focus = Focus::Pkgs,
